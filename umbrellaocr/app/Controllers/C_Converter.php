@@ -11,7 +11,8 @@ use Psr\Log\LoggerInterface;
 
 class C_Converter extends BaseController
 {
-    protected $flaskUrl = 'http://localhost:5000'; // URL Flask service
+    protected $flaskUrl = 'http://192.19.27.105:5000';
+    protected $sharedFolderPath = '/mnt/converter_share'; 
     
     public function initController(RequestInterface $request, ResponseInterface $response, LoggerInterface $logger)
     {
@@ -50,11 +51,10 @@ class C_Converter extends BaseController
         if ($file->isValid() && !$file->hasMoved()) {
             // Generate unique filename
             $fileName = uniqid() . '_' . $file->getName();
-            $tempPath = sys_get_temp_dir() . '/' . $fileName;
             
-            // Move file to temporary location
-            if ($file->move(sys_get_temp_dir(), $fileName)) {
-                session()->set('uploaded_file', $tempPath);
+            if ($file->move($this->sharedFolderPath, $fileName)) {
+                // Store the filename (not the full path) in the session for the next step
+                session()->set('uploaded_filename', $fileName);
                 session()->set('original_filename', pathinfo($file->getName(), PATHINFO_FILENAME));
                 
                 return $this->response->setJSON([
@@ -74,30 +74,28 @@ class C_Converter extends BaseController
     
     public function process()
     {
-        $filePath = session()->get('uploaded_file');
+        $fileName = session()->get('uploaded_filename');
         $format = $this->request->getPost('format') ?? 'xlsx';
         
-        if (!$filePath || !file_exists($filePath)) {
-            return $this->response->setJSON([
-                'success' => false,
-                'message' => 'No file uploaded or file not found'
-            ]);
+        if (!$fileName) {
+            return $this->response->setJSON(['success' => false, 'message' => 'No file uploaded or session expired']);
+        }
+
+        // Verify the file exists in the share before processing
+        if (!file_exists($this->sharedFolderPath . '/' . $fileName)) {
+            return $this->response->setJSON(['success' => false, 'message' => 'Uploaded file not found in the shared directory.']);
         }
         
         try {
             // Call Flask service to process the file
-            $result = $this->callFlaskService($filePath, $format);
+            $result = $this->callFlaskService($fileName, $format);
             
             if ($result['success']) {
-                // Store result in session for download
+                // Store the result filename from Flask for download
                 $downloadId = uniqid();
-                session()->set('download_' . $downloadId, $result['data']);
+                session()->set('download_id_' . $downloadId, $result['output_filename']);
                 session()->set('download_format_' . $downloadId, $format);
-                
-                // Clean up uploaded file
-                if (file_exists($filePath)) {
-                    unlink($filePath);
-                }
+                // The original uploaded file is already deleted by Flask, so no cleanup needed here.
                 
                 return $this->response->setJSON([
                     'success' => true,
@@ -122,83 +120,77 @@ class C_Converter extends BaseController
     
     public function download($downloadId)
     {
-        $data = session()->get('download_' . $downloadId);
+        $outputFilename = session()->get('download_id_' . $downloadId);
         $format = session()->get('download_format_' . $downloadId);
         $originalFilename = session()->get('original_filename') ?? 'converted';
         
-        if (!$data) {
-            throw new \CodeIgniter\Exceptions\PageNotFoundException('Download not found');
+        if (!$outputFilename) {
+            throw new \CodeIgniter\Exceptions\PageNotFoundException('Download data not found or expired.');
         }
+
+        $outputFilePath = $this->sharedFolderPath . '/' . $outputFilename;
+
+        if (!file_exists($outputFilePath)) {
+             throw new \CodeIgniter\Exceptions\PageNotFoundException('Converted file not found on the share.');
+        }
+
+        // Read the processed file from the share
+        $fileData = file_get_contents($outputFilePath);
         
         // Clean up session data
-        session()->remove('download_' . $downloadId);
+        session()->remove('download_id_' . $downloadId);
         session()->remove('download_format_' . $downloadId);
         session()->remove('original_filename');
+        
+        // Clean up the processed file from the share after reading it
+        if (file_exists($outputFilePath)) {
+            unlink($outputFilePath);
+        }
         
         // Set appropriate headers based on format
         $mimeTypes = [
             'xlsx' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
             'csv' => 'text/csv',
-            'ods' => 'application/vnd.oasis.opendocument.spreadsheet'
+            'ods' => 'application/vnd.oasis.opendocument.spreadsheet',
+            'zip' => 'application/zip' // Added for multi-table CSV
         ];
         
         $extensions = [
             'xlsx' => 'xlsx',
             'csv' => 'csv',
-            'ods' => 'ods'
+            'ods' => 'ods',
+            'zip' => 'zip' // Added for multi-table CSV
         ];
         
-        $mimeType = $mimeTypes[$format] ?? 'application/octet-stream';
-        $extension = $extensions[$format] ?? 'xlsx';
+        $fileExtension = pathinfo($outputFilename, PATHINFO_EXTENSION);
+        $mimeType = $mimeTypes[$fileExtension] ?? 'application/octet-stream';
+        $downloadFilename = $originalFilename . '.' . $fileExtension;
         
-        // For CSV with multiple tables, it will be a ZIP file
-        if ($format === 'csv' && strpos($data, 'UEsDB') === 0) { // ZIP file signature in base64
-            $mimeType = 'application/zip';
-            $extension = 'zip';
-        }
-        
-        $filename = $originalFilename . '.' . $extension;
-        
-        // Decode the base64 data
-        $fileData = base64_decode($data);
-        
-        // Verify the decoded data is not empty
         if (empty($fileData)) {
-            throw new \CodeIgniter\Exceptions\PageNotFoundException('File data is corrupted');
+            throw new \CodeIgniter\Exceptions\PageNotFoundException('File data is empty or corrupted');
         }
         
         return $this->response
             ->setHeader('Content-Type', $mimeType)
-            ->setHeader('Content-Disposition', 'attachment; filename="' . $filename . '"')
+            ->setHeader('Content-Disposition', 'attachment; filename="' . $downloadFilename . '"')
             ->setHeader('Content-Length', strlen($fileData))
-            ->setHeader('Cache-Control', 'no-cache, must-revalidate')
-            ->setHeader('Expires', 'Sat, 26 Jul 1997 05:00:00 GMT')
             ->setBody($fileData);
     }
     
-    private function callFlaskService($filePath, $format)
+    private function callFlaskService($fileName, $format)
     {
-        // Read file content
-        $fileContent = file_get_contents($filePath);
-        $fileBase64 = base64_encode($fileContent);
-        
-        // Prepare data for Flask service
-        $postData = [
-            'file_content' => $fileBase64,
-            'filename' => basename($filePath),
+         $postData = [
+            'filename' => $fileName,
             'format' => $format
         ];
         
-        // Initialize cURL
         $ch = curl_init();
         curl_setopt($ch, CURLOPT_URL, $this->flaskUrl . '/process');
         curl_setopt($ch, CURLOPT_POST, true);
         curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($postData));
-        curl_setopt($ch, CURLOPT_HTTPHEADER, [
-            'Content-Type: application/json'
-        ]);
+        curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($ch, CURLOPT_TIMEOUT, 120); // 2 minutes timeout
+        curl_setopt($ch, CURLOPT_TIMEOUT, 120);
         
         $response = curl_exec($ch);
         $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
@@ -210,13 +202,15 @@ class C_Converter extends BaseController
         }
         
         if ($httpCode !== 200) {
-            throw new \Exception('Flask service returned HTTP ' . $httpCode);
+            $errorBody = json_decode($response, true);
+            $errorMessage = $errorBody['message'] ?? 'An unknown error occurred';
+            throw new \Exception('Flask service returned HTTP ' . $httpCode . ': ' . $errorMessage);
         }
         
         $result = json_decode($response, true);
         
         if (!$result) {
-            throw new \Exception('Invalid response from Flask service');
+            throw new \Exception('Invalid JSON response from Flask service');
         }
         
         return $result;

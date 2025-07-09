@@ -19,6 +19,9 @@ from rapidocr_onnxruntime import RapidOCR
 app = Flask(__name__)
 CORS(app)
 
+# Define the path to the shared folder on the server
+SHARED_FOLDER = '/srv/samba/converter_files' 
+
 # Initialize OCR engine
 engine = RapidOCR(
     rec_batch_num=6,
@@ -643,17 +646,28 @@ def process_file():
     try:
         data = request.get_json()
         
-        if not data or 'file_content' not in data:
+        if not data or 'filename' not in data:
             return jsonify({
                 'success': False,
-                'message': 'No file content provided'
+                'message': 'No filename provided'
             }), 400
-        
-        file_content = base64.b64decode(data['file_content'])
-        filename = data.get('filename', 'unknown')
+
+        filename = data.get('filename')
         output_format = data.get('format', 'xlsx')
         
-        # Determine file type
+        # Construct the full path to the input file in the shared folder
+        input_filepath = os.path.join(SHARED_FOLDER, filename)
+
+        if not os.path.exists(input_filepath):
+            return jsonify({
+                'success': False,
+                'message': f'File not found on server: {filename}'
+            }), 404
+        
+        # Read the file content directly from the path
+        with open(input_filepath, 'rb') as f:
+            file_content = f.read()
+
         file_extension = filename.lower().split('.')[-1] if '.' in filename else ''
         
         if file_extension == 'pdf':
@@ -666,20 +680,30 @@ def process_file():
                 'message': 'Unsupported file type'
             }), 400
         
-        if not tables:
-            return jsonify({
-                'success': False,
-                'message': 'No tables detected in the file'
-            })
-        
-        # Create export file
+        # Create export file data in memory
         export_data = create_tables_export(tables, output_format)
-        export_base64 = base64.b64encode(export_data).decode('utf-8')
+        
+        # Define the output filename
+        original_basename = os.path.splitext(filename)[0]
+        output_extension = output_format
+        if output_format == 'csv' and len(tables) > 1:
+            output_extension = 'zip'
+        
+        # A unique ID is still good to avoid filename collisions for the output
+        output_filename = f"processed_{original_basename}.{output_extension}"
+        output_filepath = os.path.join(SHARED_FOLDER, output_filename)
+        
+        # Write the processed file to the shared folder
+        with open(output_filepath, 'wb') as f:
+            f.write(export_data)
+
+        # Clean up the original uploaded file
+        os.remove(input_filepath)
         
         return jsonify({
             'success': True,
             'message': 'Conversion completed successfully',
-            'data': export_base64,
+            'output_filename': output_filename, # Return the filename of the result
             'tables_count': len(tables)
         })
         
