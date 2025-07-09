@@ -53,9 +53,6 @@ class C_Converter extends BaseController
             $fileName = uniqid() . '_' . $file->getName();
             
             if ($file->move($this->sharedFolderPath, $fileName)) {
-                // Store the filename (not the full path) in the session for the next step
-                session()->set('uploaded_filename', $fileName);
-                session()->set('original_filename', pathinfo($file->getName(), PATHINFO_FILENAME));
                 
                 return $this->response->setJSON([
                     'success' => true,
@@ -74,33 +71,21 @@ class C_Converter extends BaseController
     
     public function process()
     {
-        $fileName = session()->get('uploaded_filename');
+        $fileName = $this->request->getPost('filename');
         $format = $this->request->getPost('format') ?? 'xlsx';
         
         if (!$fileName) {
-            return $this->response->setJSON(['success' => false, 'message' => 'No file uploaded or session expired']);
-        }
-
-        // Verify the file exists in the share before processing
-        if (!file_exists($this->sharedFolderPath . '/' . $fileName)) {
-            return $this->response->setJSON(['success' => false, 'message' => 'Uploaded file not found in the shared directory.']);
+            return $this->response->setJSON(['success' => false, 'message' => 'No file uploaded']);
         }
         
         try {
-            // Call Flask service to process the file
             $result = $this->callFlaskService($fileName, $format);
             
             if ($result['success']) {
-                // Store the result filename from Flask for download
-                $downloadId = uniqid();
-                session()->set('download_id_' . $downloadId, $result['output_filename']);
-                session()->set('download_format_' . $downloadId, $format);
-                // The original uploaded file is already deleted by Flask, so no cleanup needed here.
-                
                 return $this->response->setJSON([
                     'success' => true,
                     'message' => 'Conversion completed successfully',
-                    'download_id' => $downloadId,
+                    'output_filename' => $result['output_filename'], 
                     'tables_count' => $result['tables_count']
                 ]);
             } else {
@@ -118,17 +103,14 @@ class C_Converter extends BaseController
         }
     }
     
-    public function download($downloadId)
+    public function download($outputFilename)
     {
-        $outputFilename = session()->get('download_id_' . $downloadId);
-        $format = session()->get('download_format_' . $downloadId);
-        $originalFilename = session()->get('original_filename') ?? 'converted';
-        
-        if (!$outputFilename) {
-            throw new \CodeIgniter\Exceptions\PageNotFoundException('Download data not found or expired.');
-        }
-
+        $originalFilename = $this->request->getGet('original') ?? 'converted';
         $outputFilePath = $this->sharedFolderPath . '/' . $outputFilename;
+
+        if (!file_exists($outputFilePath)) {
+            throw new \CodeIgniter\Exceptions\PageNotFoundException('Converted file not found on the share.');
+        }
 
         if (!file_exists($outputFilePath)) {
              throw new \CodeIgniter\Exceptions\PageNotFoundException('Converted file not found on the share.');
@@ -136,11 +118,15 @@ class C_Converter extends BaseController
 
         // Read the processed file from the share
         $fileData = file_get_contents($outputFilePath);
-        
-        // Clean up session data
-        session()->remove('download_id_' . $downloadId);
-        session()->remove('download_format_' . $downloadId);
-        session()->remove('original_filename');
+
+        // Hapus file setelah dibaca
+        if (file_exists($outputFilePath)) {
+            unlink($outputFilePath);
+        }
+
+        // Tentukan nama file download
+        $fileExtension = pathinfo($outputFilename, PATHINFO_EXTENSION);
+        $downloadFilename = $originalFilename . '.' . $fileExtension;
         
         // Clean up the processed file from the share after reading it
         if (file_exists($outputFilePath)) {

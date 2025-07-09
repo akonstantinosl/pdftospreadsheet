@@ -220,8 +220,11 @@
             const errorMessage = document.getElementById('errorMessage');
 
             let selectedFormat = 'xlsx';
-            let uploadedFile = null;
-            let downloadId = null;
+            let conversionData = {
+                unique_filename: null,
+                original_filename: null,
+                output_filename: null
+            };
 
             // Upload area events
             uploadArea.addEventListener('click', () => fileInput.click());
@@ -284,7 +287,6 @@
                     return;
                 }
 
-                uploadedFile = file;
                 uploadFile(file);
             }
 
@@ -304,6 +306,8 @@
                     hideProgress();
                     if (data.success) {
                         showFileInfo(file);
+                        conversionData.unique_filename = data.filename; 
+                        conversionData.original_filename = file.name.split('.').slice(0, -1).join('.');
                         convertBtn.disabled = false;
                     } else {
                         showError(data.message || 'Upload gagal');
@@ -323,7 +327,11 @@
             }
 
             function resetUpload() {
-                uploadedFile = null;
+                conversionData = {
+                    unique_filename: null,
+                    original_filename: null,
+                    output_filename: null
+                };
                 fileInfo.style.display = 'none';
                 uploadArea.style.display = 'block';
                 convertBtn.disabled = true;
@@ -343,8 +351,8 @@
             }
 
             function processFile() {
-                if (!uploadedFile) {
-                    showError('Pilih file terlebih dahulu');
+                if (!conversionData.unique_filename) {
+                    showError('File belum diunggah dengan benar.');
                     return;
                 }
 
@@ -354,6 +362,7 @@
 
                 const formData = new FormData();
                 formData.append('format', selectedFormat);
+                formData.append('filename', conversionData.unique_filename);
 
                 fetch('<?= base_url('converter/process') ?>', {
                     method: 'POST',
@@ -363,7 +372,7 @@
                 .then(data => {
                     setConvertingState(false);
                     if (data.success) {
-                        downloadId = data.download_id;
+                        conversionData.output_filename = data.output_filename;
                         showDownloadSection(data.tables_count);
                     } else {
                         showError(data.message || 'Konversi gagal');
@@ -376,8 +385,9 @@
             }
 
             function downloadFile() {
-                if (downloadId) {
-                    window.location.href = '<?= base_url('converter/download/') ?>' + downloadId;
+                if (conversionData.output_filename) {
+                    const originalName = encodeURIComponent(conversionData.original_filename);
+                    window.location.href = `<?= base_url('converter/download/') ?>${conversionData.output_filename}?original=${originalName}`;
                 }
             }
 
