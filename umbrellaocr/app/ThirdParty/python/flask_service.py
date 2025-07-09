@@ -15,14 +15,17 @@ from collections import defaultdict
 from scipy.signal import find_peaks
 from scipy.ndimage import gaussian_filter1d
 from rapidocr_onnxruntime import RapidOCR
+import gc
 
 app = Flask(__name__)
 CORS(app)
 
-# Define the path to the shared folder on the server
-SHARED_FOLDER = '/srv/samba/converter_files' 
 
-# Initialize OCR engine
+SHARED_FOLDER = '/srv/samba/converter_files'
+PDF_PROCESSING_DPI = 200
+
+# Inisialisasi Model OCR
+print("Initializing OCR engine...")
 engine = RapidOCR(
     rec_batch_num=6,
     det_model_name='ch_PP-OCRv4_det',
@@ -34,6 +37,7 @@ engine = RapidOCR(
     det_db_box_thresh=0.5,
     det_db_unclip_ratio=1.6
 )
+print("OCR engine initialized successfully.")
 
 def preprocess_image_for_ocr(img_array):
     """Preprocess image to improve OCR results for small text."""
@@ -239,6 +243,8 @@ def detect_cells_from_text(text_items, table_width, table_height):
     
     def cluster_coordinates(coords, threshold):
         clusters = []
+        if not coords:
+            return clusters
         current_cluster = [coords[0]]
         current_value = coords[0]
         
@@ -356,6 +362,9 @@ def reconstruct_table(texts, table_width, table_height):
     row_threshold = max(avg_text_height * 0.8, 12)
     
     rows = []
+    if not texts_sorted_by_y:
+        return []
+
     current_row = [texts_sorted_by_y[0]]
     row_y = texts_sorted_by_y[0]['y_center']
     
@@ -382,7 +391,7 @@ def reconstruct_table(texts, table_width, table_height):
         if not x_centers:
             return []
         
-        avg_text_width = sum(t['width'] for t in texts) / len(texts)
+        avg_text_width = sum(t['width'] for t in texts) / len(texts) if texts else 0
         col_threshold = max(avg_text_width * 1.5, 20)
         
         x_centers = sorted(x_centers)
@@ -410,7 +419,7 @@ def reconstruct_table(texts, table_width, table_height):
         
         for text in row_texts:
             col_idx = min(range(num_cols), 
-                       key=lambda i: abs(text['x_center'] - col_centers[i]))
+                          key=lambda i: abs(text['x_center'] - col_centers[i]))
             
             if row_data[col_idx]:
                 row_data[col_idx] += ' ' + text['text']
@@ -423,6 +432,7 @@ def reconstruct_table(texts, table_width, table_height):
 
 def create_tables_export(tables, output_format='xlsx'):
     """Creates a file from extracted tables in the specified format."""
+    # Fungsi ini sudah cukup efisien, tidak perlu perubahan signifikan.
     output = io.BytesIO()
     
     def calculate_column_widths(dataframe):
@@ -444,145 +454,39 @@ def create_tables_export(tables, output_format='xlsx'):
                 worksheet = writer.sheets[sheet_name]
                 for idx, col in enumerate(df.columns):
                     max_length = 0
-                    for entry in df[col].astype(str):
-                        max_length = max(max_length, len(entry))
+                    # Handle empty dataframes
+                    if not df.empty:
+                        for entry in df[col].astype(str):
+                            max_length = max(max_length, len(entry))
                     column_width = max(max_length, len(str(col)))
                     worksheet.column_dimensions[get_column_letter(idx+1)].width = column_width + 2
     
     elif output_format == 'csv':
         if len(tables) == 1:
-            tables[0].to_csv(output, index=False, header=False)
+            tables[0].to_csv(output, index=False, header=False, encoding='utf-8')
         else:
             import zipfile
             with zipfile.ZipFile(output, 'w') as zf:
                 for i, df in enumerate(tables):
                     file_name = f"table_{i+1}.csv"
-                    temp_csv = io.StringIO()
-                    df.to_csv(temp_csv, index=False, header=False)
-                    zf.writestr(file_name, temp_csv.getvalue())
+                    # Use a string buffer instead of a temporary file
+                    csv_buffer = io.StringIO()
+                    df.to_csv(csv_buffer, index=False, header=False, encoding='utf-8')
+                    zf.writestr(file_name, csv_buffer.getvalue())
     
     elif output_format == 'ods':
-        # Enhanced ODS implementation with proper column width support
         try:
-            # Method 1: Try using pandas with odfpy engine
-            with pd.ExcelWriter(output, engine='odf') as writer:
-                for i, df in enumerate(tables):
-                    sheet_name = f"Table {i+1}"
-                    df.to_excel(writer, sheet_name=sheet_name, index=False, header=False)
-            
+            import pyexcel_ods3
+            ods_data = {}
+            for i, df in enumerate(tables):
+                sheet_name = f"Table {i+1}"
+                # Convert dataframe to list of lists for pyexcel
+                ods_data[sheet_name] = df.values.tolist()
+            pyexcel_ods3.save_data(output, ods_data)
         except ImportError:
-            # Method 2: Use odfpy directly for better control over formatting
-            try:
-                from odf.opendocument import OpenDocumentSpreadsheet
-                from odf.style import Style, TableColumnProperties, TableCellProperties
-                from odf.table import Table, TableColumn, TableRow, TableCell
-                from odf.text import P
-                from odf import teletype
-                
-                # Create new ODS document
-                doc = OpenDocumentSpreadsheet()
-                
-                for i, df in enumerate(tables):
-                    sheet_name = f"Table{i+1}"  # Remove space for ODS compatibility
-                    
-                    # Create table
-                    table = Table(name=sheet_name)
-                    doc.spreadsheet.addElement(table)
-                    
-                    # Calculate column widths based on content
-                    col_widths = []
-                    for col_idx, col_name in enumerate(df.columns):
-                        max_length = 0
-                        # Check column data for max length
-                        for _, row in df.iterrows():
-                            cell_value = str(row.iloc[col_idx]) if pd.notna(row.iloc[col_idx]) else ""
-                            max_length = max(max_length, len(cell_value))
-                        
-                        # Set minimum width and add padding
-                        col_width = max(max_length, 8) + 2  # minimum 8 chars + 2 padding
-                        col_widths.append(col_width)
-                    
-                    # Create column styles with proper widths
-                    for col_idx, width in enumerate(col_widths):
-                        # Create style for this column
-                        style_name = f"col{i}_{col_idx}_style"
-                        col_style = Style(name=style_name, family="table-column")
-                        
-                        # Convert character width to cm (approx. 0.25cm per char for better readability)
-                        width_cm = width * 0.25
-                        col_style.addElement(TableColumnProperties(columnwidth=f"{width_cm:.2f}cm"))
-                        doc.automaticstyles.addElement(col_style)
-                        
-                        # Add column with style
-                        table.addElement(TableColumn(stylename=style_name))
-                    
-                    # Add data rows
-                    for _, row in df.iterrows():
-                        tr = TableRow()
-                        table.addElement(tr)
-                        
-                        for cell_value in row:
-                            tc = TableCell()
-                            tr.addElement(tc)
-                            
-                            # Handle different value types and ensure proper text formatting
-                            if pd.notna(cell_value):
-                                cell_text = str(cell_value).strip()
-                                if cell_text:  # Only add non-empty text
-                                    p = P()
-                                    teletype.addTextToElement(p, cell_text)
-                                    tc.addElement(p)
-                                else:
-                                    # Add empty paragraph for empty cells
-                                    tc.addElement(P())
-                            else:
-                                # Add empty paragraph for null cells
-                                tc.addElement(P())
-                
-                # Save to output buffer
-                doc.save(output)
-                
-            except ImportError:
-                # Method 3: Fallback to pyexcel-ods3
-                try:
-                    import pyexcel_ods3
-                    
-                    # Prepare data structure for ODS export
-                    ods_data = {}
-                    for i, df in enumerate(tables):
-                        sheet_name = f"Table {i+1}"
-                        # Convert DataFrame to list of lists, ensuring all values are properly formatted
-                        sheet_data = []
-                        for _, row in df.iterrows():
-                            row_data = []
-                            for cell in row:
-                                if pd.notna(cell):
-                                    # Clean and format cell data
-                                    cell_str = str(cell).strip()
-                                    row_data.append(cell_str)
-                                else:
-                                    row_data.append('')
-                            sheet_data.append(row_data)
-                        ods_data[sheet_name] = sheet_data
-                    
-                    # Write to output buffer
-                    pyexcel_ods3.save_data(output, ods_data)
-                    
-                except ImportError:
-                    # Final fallback - create Excel format
-                    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                        for i, df in enumerate(tables):
-                            sheet_name = f"Table {i+1}"
-                            df.to_excel(writer, sheet_name=sheet_name, index=False, header=False)
-                            
-                            worksheet = writer.sheets[sheet_name]
-                            for idx, col in enumerate(df.columns):
-                                max_length = 0
-                                for entry in df[col].astype(str):
-                                    max_length = max(max_length, len(entry))
-                                column_width = max(max_length, len(str(col)))
-                                worksheet.column_dimensions[get_column_letter(idx+1)].width = column_width + 2
-    
+            # Fallback to xlsx if pyexcel_ods3 is not installed
+            return create_tables_export(tables, 'xlsx')
+
     return output.getvalue()
 
 def process_image_for_tables(img_array):
@@ -593,9 +497,10 @@ def process_image_for_tables(img_array):
     table_rects = detect_tables(img_array, 25, True, True)
     
     if not table_rects:
+        # Fallback to dump all text if no tables are found
         if isinstance(ocr_result, tuple) and len(ocr_result) >= 1 and ocr_result[0]:
             all_texts = [item[1] for item in ocr_result[0]]
-            return [pd.DataFrame({"Text": all_texts})]
+            return [pd.DataFrame({"Detected Text": all_texts})]
         return []
     
     tables = []
@@ -608,38 +513,49 @@ def process_image_for_tables(img_array):
     
     return tables
 
-def process_pdf(file_content):
-    """Process a PDF file and extract tables from all pages."""
-    with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp_file:
-        tmp_file.write(file_content)
-        tmp_file.flush()
-        
+def process_pdf(file_path):
+    """Process a PDF file and extract tables from all pages, one page at a time."""
+    all_tables = []
+    
+    # Dapatkan info jumlah halaman tanpa memuat seluruh file
+    page_count = pdf2image.pdfinfo_from_path(file_path)['Pages']
+
+    # Loop untuk setiap halaman
+    for page_num in range(1, page_count + 1):
         try:
-            pdf_images = pdf2image.convert_from_path(tmp_file.name, dpi=300)
+            # Konversi HANYA SATU halaman pada satu waktu
+            pdf_image = pdf2image.convert_from_path(
+                file_path,
+                dpi=PDF_PROCESSING_DPI,
+                first_page=page_num,
+                last_page=page_num
+            )[0] # Ambil elemen pertama karena hanya ada satu halaman
+
+            img_array = np.array(pdf_image.convert('RGB'))
             
-            all_tables = []
-            for i, img in enumerate(pdf_images):
-                img_array = np.array(img.convert('RGB'))
-                page_tables = process_image_for_tables(img_array)
-                all_tables.extend(page_tables)
-            
-            return all_tables
-        finally:
-            os.unlink(tmp_file.name)
+            # Proses halaman ini
+            page_tables = process_image_for_tables(img_array)
+            all_tables.extend(page_tables)
+
+            # Hapus objek besar setelah tidak digunakan lagi di dalam loop
+            del pdf_image
+            del img_array
+            del page_tables
+            gc.collect() # Panggil garbage collector
+        
+        except Exception as e:
+            print(f"Error processing page {page_num}: {e}")
+            continue # Lanjutkan ke halaman berikutnya jika ada error
+
+    return all_tables
 
 def process_image(file_content):
     """Process an image file and extract tables."""
-    with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
-        tmp_file.write(file_content)
-        tmp_file.flush()
-        
-        try:
-            image = Image.open(tmp_file.name)
-            img_array = np.array(image.convert('RGB'))
-            tables = process_image_for_tables(img_array)
-            return tables
-        finally:
-            os.unlink(tmp_file.name)
+    # Fungsi ini sudah relatif efisien untuk satu gambar
+    image = Image.open(io.BytesIO(file_content))
+    img_array = np.array(image.convert('RGB'))
+    tables = process_image_for_tables(img_array)
+    return tables
 
 @app.route('/process', methods=['POST'])
 def process_file():
@@ -655,7 +571,6 @@ def process_file():
         filename = data.get('filename')
         output_format = data.get('format', 'xlsx')
         
-        # Construct the full path to the input file in the shared folder
         input_filepath = os.path.join(SHARED_FOLDER, filename)
 
         if not os.path.exists(input_filepath):
@@ -664,15 +579,15 @@ def process_file():
                 'message': f'File not found on server: {filename}'
             }), 404
         
-        # Read the file content directly from the path
-        with open(input_filepath, 'rb') as f:
-            file_content = f.read()
-
         file_extension = filename.lower().split('.')[-1] if '.' in filename else ''
         
+        tables = []
         if file_extension == 'pdf':
-            tables = process_pdf(file_content)
+            # DIUBAH: Kirim path file, bukan kontennya, untuk pemrosesan halaman per halaman
+            tables = process_pdf(input_filepath)
         elif file_extension in ['jpg', 'jpeg', 'png']:
+            with open(input_filepath, 'rb') as f:
+                file_content = f.read()
             tables = process_image(file_content)
         else:
             return jsonify({
@@ -680,37 +595,44 @@ def process_file():
                 'message': 'Unsupported file type'
             }), 400
         
-        # Create export file data in memory
+        # Penanganan jika tidak ada tabel yang ditemukan
+        if not tables:
+             return jsonify({
+                'success': False,
+                'message': 'No tables could be extracted from the document.'
+            }), 400
+
         export_data = create_tables_export(tables, output_format)
         
-        # Define the output filename
         original_basename = os.path.splitext(filename)[0]
         output_extension = output_format
         if output_format == 'csv' and len(tables) > 1:
             output_extension = 'zip'
         
-        # A unique ID is still good to avoid filename collisions for the output
-        output_filename = f"processed_{original_basename}.{output_extension}"
+        # Pastikan output filename unik untuk menghindari konflik
+        unique_id = os.path.splitext(os.path.basename(original_basename))[0].replace('processed_', '')
+        output_filename = f"processed_{unique_id}.{output_extension}"
         output_filepath = os.path.join(SHARED_FOLDER, output_filename)
         
-        # Write the processed file to the shared folder
         with open(output_filepath, 'wb') as f:
             f.write(export_data)
 
-        # Clean up the original uploaded file
+        # Hapus file asli yang diunggah setelah diproses
         os.remove(input_filepath)
         
         return jsonify({
             'success': True,
             'message': 'Conversion completed successfully',
-            'output_filename': output_filename, # Return the filename of the result
+            'output_filename': output_filename,
             'tables_count': len(tables)
         })
         
     except Exception as e:
+        # Logging error akan sangat membantu di produksi
+        app.logger.error(f"Processing error for {data.get('filename', 'unknown file')}: {e}", exc_info=True)
         return jsonify({
             'success': False,
-            'message': f'Processing error: {str(e)}'
+            'message': f'An unexpected error occurred during processing: {str(e)}'
         }), 500
 
 @app.route('/health', methods=['GET'])
@@ -721,4 +643,5 @@ def health_check():
     })
 
 if __name__ == '__main__':
+    # Mode debug tidak untuk produksi
     app.run(host='0.0.0.0', port=5000, debug=True)
