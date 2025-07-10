@@ -12,7 +12,7 @@ use Psr\Log\LoggerInterface;
 class C_Converter extends BaseController
 {
     protected $flaskUrl = 'http://192.19.27.105:5000';
-    protected $sharedFolderPath = '/mnt/converter_share'; 
+    protected $sharedFolderPath = '/srv/samba/converter_files'; 
     
     public function initController(RequestInterface $request, ResponseInterface $response, LoggerInterface $logger)
     {
@@ -57,7 +57,7 @@ class C_Converter extends BaseController
                 return $this->response->setJSON([
                     'success' => true,
                     'message' => 'File uploaded successfully',
-                    'filename' => $file->getName(),
+                    'filename' => $fileName,
                     'filesize' => $file->getSize()
                 ]);
             }
