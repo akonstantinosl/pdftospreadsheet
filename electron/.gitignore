@@ -1,0 +1,16 @@
+# Node.js
+node_modules/
+
+# Build output
+dist/
+build/
+
+# Electron cache
+.electron/
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+
+# Log files
+*.log

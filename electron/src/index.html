@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PDF to Spreadsheet Converter</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <h1>PDF to Spreadsheet Converter</h1>
+            <p>Ekstrak tabel dari file PDF dan gambar ke berbagai format spreadsheet</p>
+        </header>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Step 1: File Selection -->
+            <div class="step-card">
+                <div class="step-header">
+                    <span class="step-number">1</span>
+                    <h3>Pilih File</h3>
+                </div>
+                <div class="file-upload-area" id="fileUploadArea">
+                    <div class="upload-content">
+                        <div class="upload-icon">📁</div>
+                        <p class="upload-text">Klik untuk memilih file atau drag & drop di sini</p>
+                        <p class="upload-subtitle">Mendukung PDF, JPG, JPEG, PNG</p>
+                        <button class="btn btn-outline" id="selectFileBtn">Pilih File</button>
+                    </div>
+                </div>
+                <div class="selected-file" id="selectedFileInfo" style="display: none;">
+                    <div class="file-info">
+                        <span class="file-icon">📄</span>
+                        <span class="file-name" id="fileName"></span>
+                        <button class="btn-remove" id="removeFileBtn">✕</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Step 2: Format Selection -->
+            <div class="step-card">
+                <div class="step-header">
+                    <span class="step-number">2</span>
+                    <h3>Format Output</h3>
+                </div>
+                <div class="format-selection">
+                    <div class="format-options">
+                        <label class="format-option">
+                            <input type="radio" name="format" value="xlsx" checked>
+                            <div class="format-card">
+                                <div class="format-icon">📊</div>
+                                <div class="format-name">XLSX</div>
+                                <div class="format-desc">Microsoft Excel</div>
+                            </div>
+                        </label>
+                        <label class="format-option">
+                            <input type="radio" name="format" value="csv">
+                            <div class="format-card">
+                                <div class="format-icon">📋</div>
+                                <div class="format-name">CSV</div>
+                                <div class="format-desc">Comma Separated</div>
+                            </div>
+                        </label>
+                        <label class="format-option">
+                            <input type="radio" name="format" value="ods">
+                            <div class="format-card">
+                                <div class="format-icon">📈</div>
+                                <div class="format-name">ODS</div>
+                                <div class="format-desc">OpenDocument</div>
+                            </div>
+                        </label>
+                        <label class="format-option">
+                            <input type="radio" name="format" value="gsheet">
+                            <div class="format-card">
+                                <div class="format-icon">📝</div>
+                                <div class="format-name">GSHEET</div>
+                                <div class="format-desc">Google Sheets</div>
+                            </div>
+                        </label>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Step 3: Convert -->
+            <div class="step-card">
+                <div class="step-header">
+                    <span class="step-number">3</span>
+                    <h3>Konversi</h3>
+                </div>
+                <div class="convert-section">
+                    <button class="btn btn-primary" id="convertBtn" disabled>
+                        <span class="btn-text">Konversi</span>
+                        <span class="btn-loading" style="display: none;">
+                            <div class="spinner"></div>
+                            Memproses...
+                        </span>
+                    </button>
+                    <p class="convert-desc">Klik untuk memulai proses konversi</p>
+                </div>
+            </div>
+
+            <!-- Progress Section -->
+            <div class="progress-section" id="progressSection" style="display: none;">
+                <div class="progress-header">
+                    <h3>Progress Konversi</h3>
+                </div>
+                <div class="progress-bar">
+                    <div class="progress-fill" id="progressFill"></div>
+                </div>
+                <div class="progress-text" id="progressText">Memulai konversi...</div>
+            </div>
+
+            <!-- Results Section -->
+            <div class="results-section" id="resultsSection" style="display: none;">
+                <div class="results-header">
+                    <h3>Hasil Konversi</h3>
+                </div>
+                <div class="results-content">
+                    <div class="results-info" id="resultsInfo"></div>
+                    <button class="btn btn-success" id="downloadBtn">
+                        <span>📥 Download File</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Error Section -->
+            <div class="error-section" id="errorSection" style="display: none;">
+                <div class="error-content">
+                    <div class="error-icon">⚠️</div>
+                    <div class="error-message" id="errorMessage"></div>
+                    <button class="btn btn-outline" id="retryBtn">Coba Lagi</button>
+                </div>
+            </div>
+        </main>
+
+        <!-- Footer -->
+        <footer class="footer">
+            <p>© 2024 PDF to Spreadsheet Converter</p>
+        </footer>
+    </div>
+
+    <!-- Python Backend Status -->
+    <div class="status-indicator" id="statusIndicator">
+        <div class="status-dot"></div>
+        <span class="status-text">Connecting...</span>
+    </div>
+
+    <script src="renderer.js"></script>
+</body>
+</html>

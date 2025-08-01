@@ -1,0 +1,88 @@
+{
+  "name": "pdf-to-spreadsheet-converter",
+  "version": "1.0.0",
+  "description": "PDF to Spreadsheet Converter with OCR and Table Detection",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "start-python": "cd python && python3 app.py",
+    "start-python-linux": "cd python/dist && ./app", 
+    "start-all": "concurrently \"npm run start-python\" \"npm run start\"",
+    "start-build-linux" : "concurrently \"npm run start-python-linux\" \"npm run start\"",
+    "build": "electron-builder",
+    "package-win": "electron-builder --win --x64",
+    "package-mac": "electron-builder --mac",
+    "package-linux": "electron-builder --linux",
+    "dev": "concurrently \"npm run start-python\" \"electron . --dev\""
+  },
+  "build": {
+    "appId": "com.converter.pdftospreadsheet",
+    "productName": "PDF to Spreadsheet Converter",
+    "files": [
+      "src/**/*",
+      "assets/**/*",
+      "node_modules/**/*"
+    ],
+    "directories": {
+      "buildResources": "assets",
+      "output": "dist"
+    },
+    "extraResources": [
+      {
+        "from": "python",
+        "to": "python",
+        "filter": ["**/*"]
+      },
+      {
+        "from": "models",
+        "to": "models",
+        "filter": ["**/*"]
+      },
+      {
+        "from": "assets",
+        "to": "assets",
+        "filter": ["**/*"]
+      }
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "assets/logo.ico"
+    },
+    "mac": {
+      "category": "public.app-category.productivity",
+      "icon": "assets/logo.icns"
+    },
+    "linux": {
+      "category": "Office",
+      "icon": "assets/logo.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "installerIcon": "assets/logo.ico"
+    }
+  },
+  "keywords": [
+    "electron",
+    "python",
+    "ocr",
+    "pdf",
+    "spreadsheet",
+    "table-detection"
+  ],
+  "author": "Your Name",
+  "license": "MIT",
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "electron": "^28.1.0",
+    "electron-builder": "^24.9.1"
+  },
+  "dependencies": {
+    "axios": "^1.6.2",
+    "electron-log": "^5.0.1",
+    "python-shell": "^5.0.0",
+    "multer": "^1.4.5-lts.1"
+  }
+}
