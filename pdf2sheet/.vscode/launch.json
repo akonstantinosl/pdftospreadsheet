@@ -1,0 +1,13 @@
+{
+    "version": "1.0.0",
+    "configurations": [
+        {
+            "type": "java",
+            "name": "Launch App",
+            "request": "launch",
+            "mainClass": "com.pdf2sheet.App",
+            "projectName": "pdf2sheet",
+            "vmArgs": "-Djava.library.path=${workspaceFolder}/jni-libs"
+        }
+    ]
+}

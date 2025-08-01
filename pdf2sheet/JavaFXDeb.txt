@@ -1,0 +1,10 @@
+1. mvn clean install
+2. mvn clean package
+3. jpackage \
+  --name MyApp \
+  --input target/ \
+  --main-jar myapp.jar \
+  --main-class com.mycompany.MainClass \
+  --type deb
+
+

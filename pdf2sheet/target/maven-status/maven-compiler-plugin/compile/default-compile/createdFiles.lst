@@ -1,0 +1,13 @@
+com/benjaminwan/ocrlibrary/OcrStop.class
+com/benjaminwan/ocrlibrary/OcrResult.class
+com/benjaminwan/ocrlibrary/TextBlock.class
+com/pdf2sheet/App.class
+com/pdf2sheet/PrimaryController$1.class
+com/benjaminwan/ocrlibrary/OcrOutput.class
+com/benjaminwan/ocrlibrary/Point.class
+module-info.class
+com/benjaminwan/ocr/Main.class
+com/pdf2sheet/PrimaryController$ocr_engine_holder.class
+com/pdf2sheet/PrimaryController.class
+com/benjaminwan/ocrlibrary/OcrEngine.class
+com/benjaminwan/ocrlibrary/OcrFailed.class
